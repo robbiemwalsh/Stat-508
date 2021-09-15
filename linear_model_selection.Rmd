@@ -1,0 +1,152 @@
+---
+title: "Data Analysis Assignment Lesson 3"
+author: "Robbie Walsh"
+date: "9/8/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,echo=F,message=F,warning=F}
+library(leaps)
+library(knitr)
+library(tidyverse)
+```
+
+
+# Introduction
+
+The purpose of this analysis is to generate simulated data, and then to use this data to perform best subset selection as well as forward and backward selection for creating a linear regression model using polynomial terms.  We will then choose the best model based on several different metrics and provide graphics to accompany this selection.  Finally, we will make comparisons between the three different selection algorithms explored.  
+
+# Data
+
+All data in this analysis was simulated data created by functions in R.  Initially, a vector of x variables was created using the rnorm() function in R to generate 100 random draws from a normal distribution with mean 5 and standard deviation of 3.  Both parameters were chosen arbitrarily as the parameters themselves are not the focus of the analysis.  An error vector was also generated using the rnorm() function to generate 100 random draws from the standard normal distribution.  A vector of arbitrary regression coefficients was generated with values 5, 1, 2, and 3.  These parameters were also chosen arbitrarily as instructed.  The only other data that was generated were various powers of the initial vector of x variables, which were computed in R.  The code for generating the data is shown below.
+
+```{r}
+set.seed(3)
+# Generate vector of x values
+xvec <- rnorm(n = 100,mean = 5,sd = 3)
+# Generate vector of epsilon values
+eps <- rnorm(n = 100)
+
+# Vector of beta values
+betavec <- c(5,1,2,3)
+# Vector of y values
+y <- betavec[1] + betavec[2]*xvec + betavec[3]*xvec^2 + betavec[4]*xvec^3 + eps
+# Get all x predictor values and y values into dataframe for analysis
+data <- data.frame(x=xvec, x2 = xvec^2, x3 = xvec^3, x4 = xvec^4, x5 = xvec^5, x6 = xvec^6, x7 = xvec^7, x8 = xvec^8, x9 = xvec^9, x10 = xvec^10, y=y)
+```
+
+
+# Analysis
+
+## Best Subsets
+
+Once the initial data had been constructed the first selection algorithm for creating the polynomial linear regression was best subsets.  This algorithm identifies the best model that contains a given number of predictors, where best is quantified as the model with the lowest residual sum of squares.  All powers of x 1 through 10 were considered as potential predictors, with models containing 1 through 10 variables considered.  We then identified the models with the lowest Mallow’s Cp, the lowest Bayesian Information Criterion, and the highest adjusted R-squared values.
+
+```{r}
+fit.mod <- regsubsets(y~.,data=data,nvmax = 10)
+# Get best model according to various criteria
+paste0("Best model according to Mallow's Cp is model ",which.min(summary(fit.mod)$cp)) 
+paste0("Best model according to BIC is model ",which.min(summary(fit.mod)$bic)) 
+paste0("Best model according to Adj R-squared is model ",which.max(summary(fit.mod)$adjr2)) 
+```
+
+
+The figure below shows the results of the best subset selection for each metric considered.
+
+```{r}
+# Generate plots of each metric
+par(mfrow=c(3,1))
+plot(x=1:10,y=summary(fit.mod)$cp,type="l",ylim = c(0,15),ylab = "Mallow's Cp",xlab = "# Variables",main = "Best Subsets Mallow's Cp")
+points(3,summary(fit.mod)$cp[3],col="red",cex=2,pch=20)
+plot(x=1:10,y=summary(fit.mod)$bic,type="l",ylim = c(-1300,-1200),ylab = "BIC",xlab = "# Variables",main = "Best Subsets BIC")
+points(3,summary(fit.mod)$bic[3],col="red",cex=2,pch=20)
+plot(x=1:10,y=summary(fit.mod)$adjr2,type="l",ylim = c(0.999995,1),ylab = "Adj Rsq",xlab = "# Variables",main = "Best Subsets AdjRsq")
+points(10,summary(fit.mod)$adjr2[10],col="red",cex=2,pch=20)
+```
+
+The coefficients for the best model based on each metric are reported in the table below.
+
+```{r}
+coef(fit.mod,id=3) %>% kable(col.names = c("Mallow's Cp"))
+coef(fit.mod,id=3) %>% kable(col.names = c("BIC"))
+coef(fit.mod,id=10) %>% kable(col.names = c("Adj R-sq"))
+```
+
+## Forward Selection
+
+The next algorithm considered was forward selection.  Forward selection adds potential variables to the model one at a time, making this computationally simpler than best subsets, but could potentially miss out on a best model because the full model space is not searched.  At each iteration, a candidate variable is added if it is the variable that reduces the residual sum of squares by the most of any variable considered.  This algorithm was performed such that the “best” model with 1 through 10 variables were created.  We then identified the models with the lowest Mallow’s Cp, the lowest Bayesian Information Criterion, and the highest adjusted R-squared values.  
+
+```{r}
+fit.mod.fwd <- regsubsets(y~.,data=data,nvmax=10,method = "forward")
+# Get best model according to various criteria
+paste0("Best model according to Mallow's Cp is model ",which.min(summary(fit.mod.fwd)$cp)) 
+paste0("Best model according to BIC is model ",which.min(summary(fit.mod.fwd)$bic)) 
+paste0("Best model according to Adj R-squared is model ",which.max(summary(fit.mod.fwd)$adjr2)) 
+```
+
+The figure below shows the results of the forward selection for each metric considered.
+
+```{r}
+# Generate plots of each metric
+par(mfrow=c(3,1))
+plot(summary(fit.mod.fwd)$cp,type="l",ylim = c(1,15),ylab = "Mallow's Cp",xlab = "# Variables",main = "Forward Selection Mallow's Cp")
+points(3,summary(fit.mod.fwd)$cp[3],col="red",cex=2,pch=20)
+plot(x=1:10,y=summary(fit.mod.fwd)$bic,type="l",ylim = c(-1300,-1200),ylab = "BIC",xlab = "# Variables",main = "Forward Selection BIC")
+points(3,summary(fit.mod.fwd)$bic[3],col="red",cex=2,pch=20)
+plot(x=1:10,y=summary(fit.mod.fwd)$adjr2,type="l",ylim = c(0.999995,1),ylab = "Adj Rsq",xlab = "# Variables",main = "Forward Selection AdjRsq")
+points(10,summary(fit.mod.fwd)$adjr2[10],col="red",cex=2,pch=20)
+```
+
+The coefficients for the best model based on each metric are reported in the table below.
+
+```{r}
+coef(fit.mod.fwd,id=3) %>% kable(col.names = c("Mallow's Cp")) 
+coef(fit.mod.fwd,id=3) %>% kable(col.names = c("BIC"))
+coef(fit.mod.fwd,id=10) %>% kable(col.names =  c("Adj Rsq"))
+```
+
+## Backward Selection
+
+The final algorithm considered was backward selection.  Backward selection is similar to forward selection but conducted in reverse.  Instead of starting with an empty model and building up variables, this algorithm starts with all potential predictors and eliminates them one by one until a stopping point is reached.  The metric that determines whether a variable is dropped is again the residual sum of squares.  The optimal models with 1 through 10 variables will be created and we will then choose the optimal model based on the same criteria as the previous two algorithms.
+
+```{r}
+# Fit backward selection with all 10 x polynomial variables
+fit.mod.bwd <- regsubsets(y~.,data=data,nvmax=10,method = "backward")
+# Get best model according to various criteria
+paste0("Best model according to Mallow's Cp is model ",which.min(summary(fit.mod.bwd)$cp)) 
+paste0("Best model according to BIC is model ",which.min(summary(fit.mod.bwd)$bic)) 
+paste0("Best model according to Adj R-squared is model ",which.max(summary(fit.mod.bwd)$adjr2)) 
+```
+
+The figure below shows the results of the backward selection for each metric considered.
+
+```{r}
+# Generate plots of each metric
+par(mfrow=c(3,1))
+plot(x=1:10,y=summary(fit.mod.bwd)$cp,type="l",ylim = c(0,15),ylab = "Mallow's Cp",xlab = "# Variables",main = "Backward Selection Mallow's Cp")
+points(8,summary(fit.mod.bwd)$cp[8],col="red",cex=2,pch=20)
+plot(x=1:10,y=summary(fit.mod.bwd)$bic,type="l",ylim = c(-1300,-1200),ylab = "BIC",xlab = "# Variables",main = "Backward Selection BIC")
+points(8,summary(fit.mod.bwd)$bic[8],col="red",cex=2,pch=20)
+plot(x=1:10,y=summary(fit.mod.bwd)$adjr2,type="l",ylim = c(0.999995,1),ylab = "Adj Rsq",xlab = "# Variables",main = "Backward Selection AdjRsq")
+points(10,summary(fit.mod.bwd)$adjr2[10],col="red",cex=2,pch=20)
+```
+
+The coefficients for the best model based on each metric are reported in the table below.
+
+```{r}
+coef(fit.mod.bwd,id=8) %>% kable(col.names = c("Mallow's Cp"))
+coef(fit.mod.bwd,id=8) %>% kable(col.names = c("BIC"))
+coef(fit.mod.bwd,id=10) %>% kable(col.names = c("Adj Rsq"))
+```
+
+# Conclusions
+
+Having conducted analysis on all three considered algorithms we immediately notice that the choice of algorithm and metric that determines the "best" model are important.  Even in data that was generated using an explicit process we ended up with several different "best" models for different algorithms and choice of metric.  One interesting observation was that for this problem forward selection and best subsets resulted in identical results across all metrics.  While this is not true in general, it was an interesting quirk of this particular analysis.  When using adjusted R-squared as the evaluation metric, there were always more variables included in the "best" model as compared to the other two metrics.  This suggests that adjusted R-squared has less of a penalty for additional variables added than Mallow's Cp or BIC since with the other two metrics the penalty of adding additional variables did not outweight the drop in RSS that was observed.  
+
+Thinking about the problem, we know the underlying data generating process in this case, since we created the data ourselves.  We therefore know that the "optimal" model should contain x, x^2, and x^3.  It appears that for this particular problem using either forward selection or best subsets and evaluating the best model based on Mallow's Cp or BIC resulted in the best outcome.  While we traditionally do not know the data genrating process, we can make some conjectures that this experiment provides evidence for.  It appears that in the case where the underlying data generating process is not related to many of the variables in the dataset (70% in this case) using an algorithm or evaluation metric that is more restrictive in the number of variables it allows into the final model will result in a better outcome.  This makes sense from an intuitive process since if there is a lot of noise in the dataset you want to have stricter filters applied to avoid overfitting.
+
+Examening the coefficients of the models, the models that have the variables involved in the data generating process (x,x^2,x^3) have coefficients that are close to the original beta values used to generate the data.  This supports the idea that for this particular problem the models that were more parsimonious are preferable to the more complex models.  This is why forward selection performed better than backward selection for this problem because forward selection starts with an empty model and forces variables to have enough explanatory power to make it into the model while backward selection does the opposite.  This resulted in smaller models for forward selection as compared to backward selection.

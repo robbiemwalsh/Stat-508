@@ -1,0 +1,205 @@
+---
+title: "Data Analysis Assignment Lesson 4"
+author: "Robbie Walsh"
+date: "9/14/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=F,warning=F,echo=F}
+# Load libraries and data
+library(mlbench)
+library(MASS)
+library(tidyverse)
+library(glmnet)
+library(leaps)
+library(knitr)
+data(BostonHousing2)
+```
+
+
+# Introduction
+
+In this analysis we are using the BostonHousing2 dataset from the mlbench package to assess the performance of several different model choices on this particular dataset for predicting the per capita crime rate.  The dataset says it contains housing data for the 506 census tracts of Boston in the 1970 census.  The dataset appears to also contain many census tracts outside the city of Boston.  Several types of models were applied to the dataset to attempt to predict the pre-capita crime rate and model effectivness was assessed.
+The algorithms that were tested were best subsets, ridge regression, and lasso.  Best subsets was favored in place of forward/backward selection because it results in better models and given the size of the dataset and power of my machine computation time was not an issue.
+
+# Data
+
+## EDA
+
+### Initial Data Inspection
+
+There are no missing values.  The variable related to the census tract will not be used since that is a unique identifier in the data.  The variable related to the town will not be used either since there are not enough observations per town to support using that variable.  The variables for latitude and longitude will also not be used because those also uniquely identify each census tract.
+
+```{r}
+any(is.na(BostonHousing2))
+head(BostonHousing2)
+```
+
+
+### Distribution of Variables
+
+The per-capita crime variable we are analyzing is very right-skewed, indicating that a log-transform may be appropriate, although we will try a box-cox transformation later in the EDA.  The variable zn, the proportion of residential land zoned for lots over 25,000 sqft is also skewed, whic makes sense because there are many urban census tracts with a few suburban and exurban tracts.  This variable wil be transformed to a categorical variable since it is likely more relevant whether the variable is 0 or nonzero.  The only other notable variable is b, which is the proportion of black residents, which is left skewed.  This variable will be log transformed which should help to create a linear relationship with the variable of interest.
+
+```{r,warning=F,message=F}
+# Look at towns with most census tracts
+BostonHousing2 %>% group_by(town) %>% summarize(Num_obs = n()) %>% top_n(5) %>% arrange(desc(Num_obs))
+
+# Check distributions of all variables
+ggplot(BostonHousing2,aes(x=crim)) + geom_histogram() + labs(title ="Distribution of Per-Capita Crime Rate")
+ggplot(BostonHousing2,aes(x=medv)) + geom_histogram() + labs(title ="Distribution of Median Home Value in 1000s")
+ggplot(BostonHousing2,aes(x=cmedv)) + geom_histogram() + labs(title ="Distribution of Corrected Median Home Value in 1000s")
+ggplot(BostonHousing2,aes(x=zn)) + geom_histogram() + labs(title = "Distribution of Residential Land Zoned for Lots over 25,000sqft")
+ggplot(BostonHousing2,aes(x=indus)) + geom_histogram() + labs(title = "Distribution of Non-Retail Business Acres")
+ggplot(BostonHousing2,aes(x=chas)) + geom_histogram(stat="count") + labs(title = "Charles River Dummy",subtitle = "1 if Tract Borders Charles River")
+ggplot(BostonHousing2,aes(x=nox)) + geom_histogram() + labs(title = "Distribution of Nitric Oxides Concentration")
+ggplot(BostonHousing2,aes(x=rm)) + geom_histogram() + labs(title = "Distribution of Average Number of Rooms per Dwelling")
+ggplot(BostonHousing2,aes(x=age)) + geom_histogram() + labs(title = "Distribution of Proportion of Occupied Units Built Before 1940")
+ggplot(BostonHousing2,aes(x=dis)) + geom_histogram() + labs(title = "Distribution of Weighted Distance to the 5 Boston Employment Centers")
+ggplot(BostonHousing2,aes(x=rad)) + geom_histogram() + labs(title = "Distribution of Index of Accessibility to Radial Highways")
+ggplot(BostonHousing2,aes(x=tax)) + geom_histogram() + labs(title = "Distribution of Property Tax per $10,000")
+ggplot(BostonHousing2,aes(x=ptratio)) + geom_histogram() + labs(title = "Distribution of Pupil-Teacher Ratio")
+ggplot(BostonHousing2,aes(x=b)) + geom_histogram() + labs(title = "Distribution of Proportion of Black Residents")
+ggplot(BostonHousing2,aes(x=lstat)) + geom_histogram() + labs(title = "Distribution of Percentage of Lower Status of Population")
+```
+
+### Correlations
+
+Examening the correlation matrix of the quantitative variables, we can see that there are some significant correlations in the data.  Most variable pairs have correlation above 30%, and many have correlations above 70%, which will cause issues related to multicollinearity.  This indicates that regularization methods to reduce the variance of the coefficients will likely be helpful when building a model.
+
+```{r}
+# Check for multicollinearity
+cor(BostonHousing2 %>% dplyr::select(-c("town","tract","lon","lat","chas")))
+```
+
+
+## Map
+
+Some points in East Boston appear in the ocean, this is likely due to issues in the way I am handling the shape files or the projection I am using.  I do not see any points in Middlesex county (even though I know some of the towns listed in the dataset are techincally in that county) so I excluded it because even though it is the most populous Boston area county it is large in geographic area and makes the map harder to see.
+
+From the first map we can see that there are several tracts with much higher per-capita crime rates than most of the other tracts in the dataset.  These tracts appear to be south of downtown Boston.  When we take the log of the per-capita crime rate we can see that these tracts appear to be in the Dorchester/Roxborough neighborhoods of Boston, which are known for being some of the poorer and less safe parts of Boston.  The per-capita crime rate apears to be lower away from that area and lowest in the outer suburban areas.
+
+```{r}
+# Load county data for the counties in the dataset
+counties <- map_data("county") %>% filter(region=="massachusetts") %>% filter(subregion %in% c("suffolk","plymouth","norfolk"))
+ggplot(counties,aes(x=long,y=lat,group=group)) + geom_polygon(fill="grey",color="black") + geom_point(data=BostonHousing2,aes(x=lon,y=lat,color=crim,group=NULL)) + coord_map(projection="albers",lat0=39,lat1=45)
+
+# Per capita crime rate is skewed, log transform to see more subtle differences
+ggplot(counties,aes(x=long,y=lat,group=group)) + geom_polygon(fill="grey",color="black") + geom_point(data=BostonHousing2,aes(x=lon,y=lat,color=log(crim),group=NULL)) + coord_map(projection="albers",lat0=39,lat1=45)
+```
+
+## Data Transformations
+
+As discussed earlier, the variables b and zn are transformed appropriately to give them a potentially better linear relationship with the per-capita crime rate.  The crim (pre-capita crime rate) variable is run through the boxcox function, which accepts a linear model and calculates the appropriate transformation for the y variable.  Since the optimal lambda value is close to 0, that means that we should use a log transform on crim, which is also applied in the code below.  I will note that I tried running all the models through without the log transform on per-capita crime rate and the resulting error statistics were slightly higher.  This gives evidence that the log transform on the crim variable at least marginally improved predictive power.
+
+```{r}
+boxcox(lm(crim ~ .,data = dplyr::select(BostonHousing2,-c("town","tract","lon","lat"))))
+
+dev_data <- BostonHousing2 %>% dplyr::select(-c("town","tract","lon","lat")) %>%
+  mutate(crim = log(crim), b = log(b), zn = if_else(zn == 0,0,1))
+```
+
+# Analysis
+
+We will first set up the necessary inputs and get the data into the correct type of data object.  In this case we will an 80/20 split for dividing the data into a training and test set.
+
+```{r}
+# Set up inputs
+set.seed(5)
+x <- model.matrix(crim~.,dev_data)[,-1]
+y <- dev_data$crim
+
+# Create training and testing sample (80/20 split)
+train <- sample(1:nrow(x),0.8*nrow(x))
+test <- (-train)
+y.test <- y[test]
+# Create equivalent train/test but in data.frame form
+train.df <- dev_data[train,]
+test.df <- dev_data[test,]
+```
+
+Best subsets selection will be the first algorithm run on the data.  We will have to define our own predict function and perform cross-validation manually.  Cross-validation is used to select the model with the optimal number of variables.  The final test MSE is stored and reported at the end of this section.
+
+```{r}
+# Run best subsets selection and get predictions and test MSE
+set.seed(5)
+# Write predict.regsubsets function
+predict.regsubsets <- function(object,newdata,id,...){
+  form <- as.formula(object$call[[2]])
+  mat <- model.matrix(form,newdata)
+  coefi <- coef(object,id=id)
+  xvars <- names(coefi)
+  mat[,xvars]%*%coefi
+}
+best.subset <- regsubsets(crim~.,data=train.df,nvmax=14)
+k <- 10
+folds <- sample(1:k,nrow(dev_data),replace=TRUE)
+cv.errors <- matrix(NA,k,14,dimnames=list(NULL,paste(1:14)))
+for (j in 1:k){
+  best.fit <- regsubsets(crim~.,data=dev_data[folds!=j,],nvmax=14)
+  for (i in 1:14){
+    pred <- predict(best.fit,dev_data[folds==j,],id=i)
+    cv.errors[j,i] <- mean((dev_data$crim[folds==j]-pred)^2)
+  }
+}
+mean.cv.errors <- apply(cv.errors,2,mean)
+best_mod <- which.min(mean.cv.errors)
+bestsubset_pred <- predict(best.subset,test.df,id=best_mod)
+# Calculate MSE and exponentiate to undo log transform
+mse_bestsubset <- mean((exp(bestsubset_pred)-exp(test.df$crim))^2)
+# Report best model
+coef(best.subset,id=best_mod)
+```
+
+The next algorithm is ride regression.  This code is less verbose because there is more support for predictions and cross-validation.  Cross-validation is used to select the optimal tuning parameter.  The coefficients for the selected model are displayed below and the test MSE is stored and reported at the end of this section.
+
+```{r}
+# Run ridge regression and get predictions and test MSE
+set.seed(5)
+grid <- 10^seq(8,-5,length = 100)
+ridge.mod <- glmnet(x[train,],y[train],alpha=0,lambda=grid,thresh=1e-12)
+
+# Get best lambda value with cv (10-fold)
+cv.out <- cv.glmnet(x[train,],y[train],alpha=0)
+plot(cv.out)
+bestlam <- cv.out$lambda.min
+
+ridge.pred <- predict(ridge.mod,s=bestlam,newx=x[test,])
+mse_ridge <- mean((exp(ridge.pred)-exp(y.test))^2)
+# Report coefficients
+predict(ridge.mod,type="coefficients",s=bestlam)
+```
+
+The final algorithm run is the lasso.  Similar to ridge regression, we use cross-validation to select the optimal tuning parameter and the coefficients for the selected model are reported below.  The test MSE is reported at the end of this section with the results from the other algorithms.
+
+```{r}
+# Run lasso 
+set.seed(5)
+grid <- 10^seq(8,-5,length = 100)
+lasso.mod <- glmnet(x[train,],y[train],alpha=1,lambda=grid)
+
+# Get best lambda value with cv (10-fold)
+cv.out <- cv.glmnet(x[train,],y[train],alpha=1)
+plot(cv.out)
+bestlam <- cv.out$lambda.min
+
+lasso.pred <- predict(lasso.mod,s=bestlam,newx=x[test,])
+mse_lasso <- mean((exp(lasso.pred)-exp(y.test))^2)
+# Report coefficients in final model
+predict(lasso.mod,type="coefficients",s=bestlam)
+```
+
+The test MSEs from each of the different algorithms are reported in the table below.
+
+```{r,results='asis'}
+# Report Results in table
+data.frame(Model = c("Best Subsets","Ridge","Lasso"),Test_MSE = c(mse_bestsubset,mse_ridge,mse_lasso)) %>% kable()
+```
+
+# Conclusions
+
+The best subsets model gave the lowest test MSE of any of the three model fitting techniques examined.  The best subsets algorithm chose a model with only 5 variables, as compared to all 14 potential variables in ridge regression and 13 that were chosen using lasso.  This is not surprising as the exploratory data analysis revealed that the predictor variable were often highly correlated with each other.  In the presence of the high degree of multicollinearity that would be present in the standard full model, it appears that techniques that reduce the number of predictors perform better.  This is supported by the fact that lasso was the second best performing algorithm since lasso at least removed the cmedv variable, which had over 90% correlation with the medv variable.  
+Given the fairly large error statistics that we observed from fitting these models, there are likely non-linear relationships that would likely be fit better by splines or interaction terms.  Since this was an excercise in comparing model fitting algorithms, spending time adjusting the particular specification of the model seemed out of scope.
