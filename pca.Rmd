@@ -1,0 +1,54 @@
+---
+title: "Data Analysis Assignment Lesson 5"
+author: "Robbie Walsh"
+date: "9/20/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+
+The purpose of this analysis is to perform PCA (principal components analysis) and explore how many components we need to represent the data in lower dimensions.  We will also see if there are any potential interpretations of the first few principal components.  The dataset is from the US Department of Agriculture Food Compisition Database.  This data was created in September 2015 and slightly revised May 2016.  The analysis shows that PCA can be a valuable tool for performing initial analysis of a dataset when there are many variables and can be an effective method of dimensionality reduction.  
+
+# Data
+
+First we will load in the data and perform the pre-processing.
+
+```{r}
+SR = read.table("C:/Users/robbi/Documents/ABBREV.txt", header=F, row.names=1, sep="^", quote="~")
+SR = na.omit(SR) # remove rows with missing values
+SR = SR[row.names(SR) != "13352",] # remove "duplicate" entry
+row.names(SR) = SR[,1] # set more meaningful row names
+SR = SR[,-1]
+names(SR) = c("Water_(g)", "Energ_Kcal", "Protein_(g)", "Lipid_Tot_(g)", "Ash_(g)", "Carbohydrt_(g)", "Fiber_TD_(g)", "Sugar_Tot_(g)", "Calcium_(mg)", "Iron_(mg)", "Magnesium_(mg)", "Phosphorus_(mg)", "Potassium_(mg)", "Sodium_(mg)", "Zinc_(mg)", "Copper_(mg)", "Manganese_(mg)", "Selenium_(µg)", "Vit_C_(mg)", "Thiamin_(mg)", "Riboflavin_(mg)", "Niacin_(mg)", "Panto_Acid_(mg)", "Vit_B6_(mg)", "Folate_Tot_(µg)", "Folic_Acid_(µg)", "Food_Folate_(µg)", "Folate_DFE_(µg)", "Choline_Tot_(mg)", "Vit_B12_(µg)", "Vit_A_IU", "Vit_A_RAE", "Retinol_(µg)", "Alpha_Carot_(µg)", "Beta_Carot_(µg)", "Beta_Crypt_(µg)", "Lycopene_(µg)", "Lut+Zea_(µg)", "Vit_E_(mg)", "Vit_D_µg", "Vit_D_IU", "Vit_K_(µg)", "FA_Sat_(g)", "FA_Mono_(g)", "FA_Poly_(g)", "Cholestrl_(mg)", "GmWt_1", "GmWt_Desc1", "GmWt_2", "GmWt_Desc2", "Refuse_Pct")
+SRp = SR[,c(1:46)] # restrict to just the nutrient variables
+```
+
+This dataset is the major source of food composition data in the United States and provides the foundation for most food composition databases in the public and private sectors.  After performing the initial processing in which we remove rows with missing values, remove a duplicate entry, and restrict the variables to just the nutrient variables, we have 2223 observations in the dataset and 46 variables.  The rows are each a different type of food, and each column gives the amount of each nutritional component in the dataset present in that food.  All variables in the dataset are quantitative variables which means we do not need to drop any when performing PCA.
+
+# Analysis
+
+Since the data is pre-processed and entirely quantitative variables we can simply pass the dataset into the prcomp function to perform PCA.  The graphs below will show the proportion of variance explained by each principal component, and then the cumulative proportion of variance explained.  
+
+```{r}
+pr.out <- prcomp(SRp,scale=TRUE)
+pr.var <- pr.out$sdev^2
+pve <- pr.var/sum(pr.var)
+plot(pve,  type="o", ylab="PVE", xlab="Principal Component", col="blue")
+plot(cumsum(pve), xlab="Principal Component", ylab="Cumulative Proportion of Variance Explained", ylim=c(0,1),type='b',col="brown")
+```
+Examening these graphs, it appears that after the 7th principal component, the marginal improvement in proportion of variance explained drops off, indicating that beyond that point you would likely not use additional components to summarize the dataset or perform further analysis.  By the 7th principal component less than 60% of the variance has been explained however, so depending on the application of the analysis more components might be needed.  In an exact science like food composition, it would likely be required to explain more than 60% of the variance so in this particular application the cumulative proportion of variance explained might be a better metric for choosing the number of components.
+
+```{r}
+biplot(pr.out,scale=0)
+```
+
+Examening a biplot of the first two principal components, we can see that the first principal component appears to put lots of positive weight on water and moderate negative weight on a host of other variables.  The end result seems to be that a lot of aqueous foods (probably fruits/vegetables) wil score highly on the first principal components.  The foods that score low (negative) on the first component appear to be fibrous foods such as cereals and seeds.  The second principal component is a little less clear but the foods scoring highly on it appear to be proteins excluding meats.  This leaves eggs and nuts, and both appear to be dried which is why they don't score higher on the first principal component.  The other end of the second principal component appears to be spices, as chili powder, peppers, and other spices and spicy foods occupy the lower end of the second component.
+
+# Conclusion
+
+Using PCA we were able to effectively reduce the dimensionality of the initial dataset.  It appears that after 7 principal components, the marginal improvement in the proportion of variance explained begins to diminish.  That being said, the first 7 components explain less than 60% of the variance so an analysis could potentially use more.  The first two principal components did not have any obvious interpretations, but there did appear to be some patterns that were highlighted in the analysis section.
