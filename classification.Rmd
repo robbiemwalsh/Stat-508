@@ -1,0 +1,194 @@
+---
+title: "Data Analysis Assignment 7"
+author: "Robbie Walsh"
+date: "10/2/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=F,warning=F}
+# Load necessary libraries
+library(ISLR)
+library(tidyverse)
+library(class)
+library(MASS)
+```
+
+
+# Introduction
+
+The purpose of this analysis is to examine how different types of classifiers perform on stock market data.  We will explore how each of these algorithms perform in comparison to each other and examine what the optimal model looks like for each algorithm.  We will evaluate the models by looking at the confusion matrix and the proportion of overall correct predictions across all observations on a training set.  The classification algorithms we will examine are logistic regression, linear discriminant analysis, quadratic discriminant analysis, and k nearest neighbors.
+
+# Data
+
+The dataset being used in this analysis is the Weekly dataset from the ISLR package.  It contains weekly percentage returns for the S&P 500 stock index between 1990 and 2010.  There are mostly 52 observations per year, except for 1990, 1996, and 2007, due to the way weeks are tracked in the dataset.  We also have a variable for the direction of the return, up or down.  There are also variables that are the % return for the current week, as well as a variable for the % return for each of the 5 previous weeks.  We also have the volume of shares traded (the average number of daily shared traded in billions).  A brief view of the dataset is presented in the table below.
+
+```{r}
+head(Weekly)
+```
+
+```{r}
+summary(Weekly)
+```
+Looking at a brief summary of the data we can see that all of the % return variables (lag1-5 and today) have similar means, maximums and minimums.  We can see that the weekly return was positive (up) slightly more than it was negative (down).
+
+```{r}
+ggplot(Weekly,aes(x=as.factor(Year),y=Today)) + geom_boxplot() + labs(title = "Figure 1: Distribution of Weekly % Returns by Year",subtitle = "S&P 500",y = "Weekly % Return",x = "Year")
+
+Weekly %>% group_by(Year) %>% summarize(positive = mean(Direction=="Up")) %>% ggplot(aes(x=Year,y=positive)) + geom_line() + labs(title = "Figure 2: Proportion of Positive Weekly Returns by Year",x = "Year",y = "Proportion of Positive Returns",subtitle = "S&P 500")
+```
+Since most of the quantitative variables are lags of each other summarizing the today variable should give us similar conclusions, just shifted slightly depending on which lag we look at.  Looking at the boxplots over time showing the distributon of returns by year we can see that while the mean does not appear to change much by year, there are some years where there is a much higher variance in weekly returns as compared to other years.  We see high variance years are in 2008 (the financial crisis) and in the early 2000s (.com bubble).
+Looking at the proportion of weeks with positive returns in each year we can see that there is significant variability in this metric across years.  It is lowest in the high variability years of 2008 and the early 2000s when there were large stock market corrections.  Other than those periods the proportion of positive return weeks appears to fluctuate above and below 0.55.
+
+```{r}
+cor(Weekly %>% dplyr::select(-c("Year","Direction")))
+```
+We see very low correlations between the quantitative variables.  While this means that we will likely not have to worry about multicolinearity, it also means that we may not see strong predictive performance out of a model predicting today or direction from the lagged variables and volume.
+
+# Analysis
+
+## Logistic Regression: Full Dataset, all Variables
+
+First we will perform logistic regression on the entire dataset predicting direction from all other variables in the dataset except today and year.  Logistic regression models the log odds as a linear combination of the predictors.  The output is a probability that the variable being predicted is 1, given the variable being predicted is framed as 0/1.  We are not using a train/test framework so building this model is more for exploratory purposes then evaluating predictive power.
+
+```{r}
+# Fit logistic regression and print results
+glm.fit <- glm(Direction~Lag1+Lag2+Lag3+Lag4+Lag5+Volume,data=Weekly,family=binomial)
+summary(glm.fit)
+```
+The only predictor that appears to be statistically significant is Lag2, all other predictors have a high p-value.
+
+```{r}
+# Examine confusion matrix and overall % of correctly identified weeks
+glm.pred <- predict(glm.fit,type="response")
+glm.preds <- if_else(glm.pred>0.5,"Up","Down")
+table(glm.preds,Weekly$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(glm.preds==Weekly$Direction),1),"% of observations."))
+```
+Overall the model correctly predicts 56.1% of observations in the dataset, only slightly better than a model you would get assigning every observation to the dominant class (up is 55.6%).  Looking at the confusion matrix we can see that the model predicts up a significant proportion of the time, with lots of true positives, but also lots of false positives.  We can see that the model is better at predicting up than down (at least using a 0.5 cutoff).
+
+## Logistic Regression
+
+Next we will fit logistic regression but will create a training set that excludes data in 2009-2010 to be used as a testing/evaluation dataset.
+
+```{r}
+# Create training and test data and fit model, get predictions and display confusion matrix and accuracy rate
+train <- Weekly %>% filter(Year<2009)
+test <- Weekly %>% filter(Year>=2009)
+glm.fit <- glm(Direction~Lag2,data=train,family=binomial)
+glm.prob <- predict(glm.fit,newdata=test,type='response')
+glm.pred <- if_else(glm.prob>0.5,"Up","Down")
+table(glm.pred,test$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(glm.pred==test$Direction),1),"% of observations."))
+```
+### Best Fit
+
+We will now attempt to improve model fit by trying out potential transformations of variables and interaction terms, the same testing and training dataset will be used.
+
+```{r}
+glm.fit <- glm(Direction~ Lag2 + Lag3:Lag5,data=train,family=binomial)
+glm.prob <- predict(glm.fit,newdata=test,type='response')
+summary(glm.fit)
+glm.pred <- if_else(glm.prob>0.5,"Up","Down")
+table(glm.pred,test$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(glm.pred==test$Direction),1),"% of observations."))
+```
+The final model chosen is not significantly different from the original model, but the addition of an interaction term generated one additional correct prediction that marginally improved the accuracy.  After examening univariate plots and trying various combinations of interactions and polynomial terms the only improvement on the testing error was the interaction shown above.  I also tried some moving averages and difference terms but since there is a lot of noise in the data it was difficult to improve the testing accuracy rate.  One thing I would have liked to try would be rolling windows but there was not enough data for that without genreating a lot of missing values.
+
+## LDA
+
+The next model we will fit is linear discriminant analysis.  LDA is similar to logistic regression except there is an additional assumption that the predictors are normally distributed.  LDA also creates a decision boundary for assigning classes and makes use of Bayes theorem using class %s as prior probabilities.  There is another assumption that the covariance matrix among classes is the same, when these assumptions hold LDA often performs well because the variance of the classifier is lowered due to the assumptions imposed. 
+
+```{r}
+# Fit LDA, get predictions and display confusion matrix and accuracy rate
+lda.fit <- lda(Direction~Lag2,data=train)
+lda.pred <- predict(lda.fit,test)
+lda.class <- lda.pred$class
+table(lda.class,test$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(lda.class==test$Direction),1),"% of observations."))
+```
+### Best Fit
+
+We will now attempt to improve model fit by trying out potential transformations of variables and interaction terms, the same testing and training dataset will be used.
+
+```{r}
+# Fit LDA, get predictions and display confusion matrix and accuracy rate
+lda.fit <- lda(Direction~Lag2 + Lag3:Lag5,data=train)
+lda.pred <- predict(lda.fit,test)
+lda.class <- lda.pred$class
+table(lda.class,test$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(lda.class==test$Direction),1),"% of observations."))
+```
+Similar to logistic regression, the interaction of the third and fifth lag yielded an additional correctly predicted test point.  A similar procedure of testing out interactions and polynomial terms was attempted with simlar results to logistic regression.  This makes sense as the two algorithms tend to produce similar results.
+
+
+## QDA
+
+The next model we will fit is quadratic discriminant analysis.  QDA is similar to LDA but it allows for a more flexible decision boundary and assumes that every class has its own covariance matrix.  This allows for more flexibility and potentially lowered bias, but this comes with the risk of inducing more variance.
+
+```{r}
+# Fit QDA, get predictions and display confusion matrix and accuracy rate
+qda.fit <- qda(Direction~Lag2,data=train)
+qda.pred <- predict(qda.fit,test)
+qda.class <- qda.pred$class
+table(qda.class,test$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(qda.class==test$Direction),1),"% of observations."))
+```
+### Best Fit
+
+We will now attempt to improve model fit by trying out potential transformations of variables and interaction terms, the same testing and training dataset will be used.
+
+```{r}
+# Fit QDA, get predictions and display confusion matrix and accuracy rate
+qda.fit <- qda(Direction~Lag2+Lag3,data=train)
+qda.pred <- predict(qda.fit,test)
+qda.class <- qda.pred$class
+table(qda.class,test$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(qda.class==test$Direction),1),"% of observations."))
+```
+Similar to the previous two models, several interactions and polynomial terms were considered, as well as moving averages and difference terms.  The only variables that improved the test set accuracy were the 2nd and 3rd lags, which yielded an improvement over just using the 2nd lag, but still fell below the other two algorithm's accuracy scores.
+
+
+## kNN
+
+The final model we will fit is k nearest neighbors.  kNN classifies observations based on the classes of the k observations that are closest to the given point.  Close is defined as euclidian distance and k is a hyperparameter that is chosen by the modeler.  kNN is a conceptually different algorithm than the others shown in this analysis and can sometimes have significantly differing performance.  It is also highly sensitive to the chosen value of k.
+
+```{r}
+set.seed(2)
+train.x <- as.matrix(train$Lag2)
+test.x <- as.matrix(test$Lag2)
+train.y <- as.matrix(train$Direction)
+knn.pred <- knn(train.x,test.x,train.y,k=1)
+table(knn.pred,test$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(knn.pred==test$Direction),1),"% of observations."))
+```
+### Best Fit
+
+We will now attempt to improve model fit by trying out potential transformations of variables and interaction terms, the same testing and training dataset will be used.
+
+```{r}
+set.seed(2)
+train.x <- as.matrix(train %>% dplyr::select(-c("Year","Today","Direction","Lag5")))
+test.x <- as.matrix(test %>% dplyr::select(-c("Year","Today","Direction","Lag5")))
+train.y <- as.matrix(train$Direction)
+k_val <- seq(1:15)
+results <- rep(0,15)
+for (k in k_val) {
+  knn.pred <- knn(train.x,test.x,train.y,k=k)
+  results[k] <- mean(knn.pred==test$Direction)
+}
+results
+knn.pred <- knn(train.x,test.x,train.y,k=11)
+table(knn.pred,test$Direction)
+print(paste0("The model correctly classifies ",round(100*mean(knn.pred==test$Direction),1),"% of observations."))
+```
+Trying several values of k and playing around with excluding some variables showed the one of the best performing combinations was a model that excluded the 5th lag and used the 11/12 nearest neighbors.  The exclusion of the 5th lag tells us that the 5th lag is no longer informative and so including it just induces more noise and variance to the predictions.  Using a fairly high number for k tells us that it is best to evaluate several of the nearest points because the directions are not well separated so you need a larger sample of points in order to get a better prediction.
+
+# Conclusions
+
+Comparing the models fit with just Lag2 as a predictor variable we can see that logistic regression and linear discriminant analysis performed the best, followed by quadratic discriminant analysis, and then k nearest neighbors with k=1.  Since QDA and low k values of kNN attempt to fit a model with comparatively low bias at the expense of higher variance we can draw the conclusion that when using just one variable to predict direction the data was particularly prone to overfitting in this instance, as such LDA and logistic regression performed the best on the test sample.    
+
+Looking at the "best models" for each algorithm, the performance gains I was able to achieve were marginal at best.  This suggests that there are no simple or easy transformations that allow you to predict weekly stock market returns from its lags and volume.  Stock market data is known for being particularly noisy and because of that it was difficult to separate the positive and negative weekly returns using the variables (or transformations of those variables) in the dataset.  If we were truly trying to predict stock returns we would want to incorporate other variables such as macroeconomic or financial variables that could help explain stock market performance.  
