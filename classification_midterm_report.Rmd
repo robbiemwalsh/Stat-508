@@ -1,0 +1,165 @@
+---
+title: "Midterm Project"
+author: "Robbie Walsh"
+date: "10/9/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this project we are working with data on university faculty perceptions and practices of using Wikipedia as a teaching resource.  The goal is to predict the "use behavior" of Wikipedia by teachers, based on their responses to the survey questions as well as their "demographic" attributes and compare several different classification algorithms performance on this dataset.  The classification algorithms we will explore in this project are logistic regression, linear discriminant analysis, quadratic discriminant analysis, and k-nearest neighbors.
+
+The results are that models that are able to fit more complex decision boundaries, such as kNN and QDA, tend to perform better on the minority response variable class at the expense of performance on the majority response variable class.  This results in overall accuracy statistics that are better for logistic regression and LDA as opposed to the other two algorithms since there are by definition, more observations in the majority class.  All models have relatively similar performance overall in the 86-87% accuracy range.  The final variables that are used in each model differ slightly but there is significant overlap in variables used across all the models.
+
+```{r,message=F,warning=F}
+library(tidyverse)
+library(splitstackshape)
+library(class)
+library(MASS)
+wiki = read.csv("C:/Users/robbi/OneDrive/Documents/wiki4HE.csv", header=T, sep=";", na.strings="?")
+```
+
+# Data
+
+The data we are using for this analysis comes from a survey sent to part-time and full-time professors at two Spanish universities in 2012-2013: Universitat Oberta de Catalunya (UOC) and Universitat Pompeu Fabra (UPF).  Looking at a summary of the data we can see that the dataset contains several variables about the professor, such as the age, gender, and job-related information.  The dataset also contains 5 "use behavior" variables, which will be used to create the metric that we will try to predict.  The rest of the variables are survey response variables on a scale of 1-5 that are related to a variety of questions asked.  There are 913 total observations in the dataset and 53 variables, 8 of which are categorical.
+
+There are many missing values in the dataset.  All columns except for 4 (all demographic information on the survey respondent) have at least one missing value.  As such, we cannot remove all rows that contain a missing value since we will exclude too much useful information.  Since we are predicting the 5 "use" variables, we will remove any rows that are missing these variables since we do not want to impute the variable that we will be attempting to predict.  After removing the rows with missing "use" observations we are left with 857 observations.  For the rest of the columns with missing values we will impute missing values with the median value of the column.  The median value is chosen because that value is a good measure of the center of the distribution and is not impacted by outliers or skewness as much as the mean is.  While imputing with the median can impact the distribution of the variable by increasing the number of observations in the central part of the distribution, this is preferable to excluding observations in this case.  For many of the variables, there are a small number of missing values relative to the total number of observations so the imputation should not be hugely impactful, particularly since we will be creating principal components out of this data.
+
+```{r}
+# Examine dataset and look at missing values
+summary(wiki)
+# Missing values by column
+apply(wiki,MARGIN = 2,FUN = function(x){sum(is.na(x))})
+# Remove missing values for the "use" variables 
+wiki <- wiki %>% filter(!is.na(Use1) & !is.na(Use2) & !is.na(Use3) & !is.na(Use4) & !is.na(Use5))
+apply(wiki,MARGIN = 2,FUN = function(x){sum(is.na(x))})
+# Fill missing values with median
+medians <- apply(wiki,MARGIN = 2,FUN = median,na.rm=T)
+for (i in 1:length(names(wiki))){
+  wiki[,i] <- ifelse(is.na(wiki[,i]),medians[i],wiki[,i])
+}
+```
+
+# Analysis
+
+## Part 1
+
+In the first part, we will perform PCA on the dataset to reduce the dimensionality of the data since we have a large number of quantitative variables.  We will pass all variables into the PCA function with the exception of the 5 "use" variables we will be predicting as well as the demographic information variables since they are categorical.  We will examine a scree plot to see the proportion of variance explained by each principal component to see how many components we should expect to use in the classification algorithms.  PCA will create linear combinations of all the variables passed in so that each component points in the direction of the maximum amount of variance, and that each component is orthogonal to all others.  This will be useful since we will not have to worry about multicollinearity when building models.
+
+Looking at the scree plot, we can see that the first component explains significantly more variance than all others.  After the first component the variance explained goes down steadily with each increasing component.  We should expect the first principal component to be a much more useful predictor as compared to the other components.
+
+```{r}
+# Run PCA and get outputs
+pca_input <- wiki %>% dplyr::select(-c("Use1","Use2","Use3","Use4","Use5","GENDER","DOMAIN","PhD","UNIVERSITY","UOC_POSITION","OTHERSTATUS","OTHER_POSITION","USERWIKI"))
+pca <- prcomp(pca_input,center=T,scale=T)
+# Look at scree plot
+plot(pca$sdev,main = "Figure 1: Scree Plot of PCA",xlab = "Principal Component",ylab = "Standard Deviation")
+# Create dataset with all variables
+data <- cbind(wiki[,c("Use1","Use2","Use3","Use4","Use5","GENDER","DOMAIN","PhD","UNIVERSITY","UOC_POSITION","OTHERSTATUS","OTHER_POSITION","USERWIKI")],predict(pca,newdata = pca_input))
+```
+
+## Part 2
+
+### Target metric
+
+The metric we will try to predict will be whether the average of the 5 use scores is above or equal to 3.  Since the scale is from 1-5 a response above or equal 3 indicates a response that is above neutral, or exactly neutral.  Taking the average of all 5 use scores gives us a general use score, which we can use to assess the overall usage of Wikipedia for that particular survey respondent.  In our dataset there are 569 respondents that have an average use score below 3 and 288 respondents with an average use score above or equal to 3.  
+
+```{r}
+data <- data %>% mutate(avg_use = (Use1+Use2+Use3+Use4+Use5)/5,
+                        above_avg = as.factor(if_else(avg_use >= 3,"yes","no"))) %>%
+  select(-c("Use1","Use2","Use3","Use4","Use5"))
+```
+
+### Dataset Splitting
+
+To create train and test sets we will split the data into samples that are 2/3  and 1/3 of total observations, respectively.  This will ensure large enough samples to create models and get an accurate out of sample assessment of the models.  The sampling will be stratified by university, domain, and the above_avg (target variable) to ensure that the train and test datasets do not exclude certain subpopulations entirely and have relatively similar distributions.
+
+```{r}
+# Create train and test tests, train is 2/3 of data and test is 1/3 of data, sample is stratified by university and domain variable to ensure representativeness
+set.seed(3)
+train_test <- stratified(data,group = c("UNIVERSITY","DOMAIN","above_avg"),size = 0.67,bothSets = T)
+train <- train_test[[1]]
+test <- train_test[[2]]
+```
+
+### Logistic Regression
+
+The first algorithm we will examine will be logistic regression.  Logistic regression models the log odds of the response variable being 1 (in this case that the user score is greater than or equal to 3) as a linear function of the predictors.  The output is a probability that the predictor variable is equal to 1.  Logistic regression is a very flexible approach that work well when the response variable has two possible outcomes.  One of the downsides of logistic regression is that if the two classes of the response variable are well-separated, then the parameter estimates of logistic regression are unstable.  There can also be issues with multicollinearity in logistic regression if the predictors are correlated, but since most of the predictors are principal components this will not be an issue since principal components are orthogonal by construction.  
+In building the logistic regression model, I first assessed how well each of the demographic variables performed.  I first built a model with all of the demographic variables included, if the p-value associated with the variable was not less than 0.05, I excluded this variable, as its inclusion would not provide enough predictive power to justify the risk of over-fitting including another variable brings on.  From there, I added principal components one at a time, starting with PC1, and moving up numerically, since in theory the principal components should be rank-ordered in how much variance they explain in the data.  As I added principal components, if a demographic variable became statistically insignificant (p-value below 0.05) then it was removed from the model.  When adding principal components, the addition of a principal component was made permanent if the testing set accuracy rate was improved by the addition of that variable. Once we reached PC5 and testing set accuracy was not improved, PC5 was not added to the model and additional principal components were considered.  Beyond PC5, only the addition of PC6 improved test set accuracy so the final model contained Gender, PC1-4, and PC6 as predictors. 
+
+```{r}
+# Fit logistic regression and print results
+glm.fit <- glm(above_avg ~ GENDER+PC1+PC2+PC3+PC4+PC6,data=train,family=binomial)
+summary(glm.fit)
+glm.pred <- predict(glm.fit,newdata = test,type="response")
+glm.preds <- if_else(glm.pred>0.5,"yes","no")
+table(glm.preds,test$above_avg)
+print(paste0("The model correctly classifies ",round(100*mean(glm.preds==test$above_avg),1),"% of observations."))
+```
+The final logistic regression model chosen correctly classified 86.6% of test set outcomes.  As expected, PC1 is the most powerful predictor variable (measured by z value), followed by PC2.  The model appears to be better at classifying outcomes below an average use score of 3 ("no"), which makes sense because classifiers often perform better on the majority class.  The model still has a better than 75% test set accuracy rate on both classes.    
+
+### LDA
+
+The next algorithm we will examine is linear discriminant analysis.  LDA is similar to logistic regression except there is an additional assumption that the predictors are normally distributed.  LDA also creates a decision boundary for assigning classes and makes use of Bayes theorem using class percentages as prior probabilities.  There is another assumption that the covariance matrix among classes is the same, when these assumptions hold LDA often performs well because the variance of the classifier is lowered due to the assumptions imposed.  The classifier can perform poorly when these assumptions are not true, which is a weakness of the algorithm.  This classifier extends to multiple response variable classes more intuitively than logistic regression and does not break down when classes are well separated.
+
+A similar procedure to the logistic regression variable selection procedure was employed in selecting predictor variables for LDA.  The difference was that I started by adding in principal component variables in LDA and then examined demographic variables afterwards.  In LDA less principal components were useful in raising test set accuracy, however the same three most powerful predictor principal component variables in logistic regression were the three principal components ultimately used in LDA.  No demographic variables were found to raise the test set accuracy once the 3 principal components in the final model were already present in the model.  
+
+```{r}
+# Fit LDA, get predictions and display confusion matrix and accuracy rate
+lda.fit <- lda(above_avg~ PC1+PC2+PC4,data=train)
+lda.pred <- predict(lda.fit,test)
+lda.class <- lda.pred$class
+table(lda.class,test$above_avg)
+print(paste0("The model correctly classifies ",round(100*mean(lda.class==test$above_avg),1),"% of observations."))
+```
+The final LDA model correctly identified 87.6% of test set observations.  The model appears to perform better when the used variable is less than 3 ("no"), which is expected as this is the majority class.  The model still performs well on both possible outcomes of the response variable. 
+
+### QDA
+
+The next model we will fit is quadratic discriminant analysis.  QDA is similar to LDA but it allows for a more flexible decision boundary (quadratic with respect to each predictor as opposed to linear) and assumes that every class has its own covariance matrix.  This allows for more flexibility and potentially lowered bias, but this comes with the risk of inducing more variance and over-fitting as compared to LDA and logistic regression.
+
+The same variable selection procedure that was used for LDA in the previous subsection was used for variable selection in QDA.  QDA's final model used similar variables to LDA, however there was one demographic variable added, DOMAIN, that slightly improved the test accuracy rate so it was ultimately included.  
+
+```{r}
+# Fit QDA, get predictions and display confusion matrix and accuracy rate
+qda.fit <- qda(above_avg~PC1+PC2+PC4+DOMAIN,data=train)
+qda.pred <- predict(qda.fit,test)
+qda.class <- qda.pred$class
+table(qda.class,test$above_avg)
+print(paste0("The model correctly classifies ",round(100*mean(qda.class==test$above_avg),1),"% of observations."))
+```
+The final model correctly identified 87.3% of test set observations.  As with the other models examined, this model performs better on the majority class ("no") than it does on the minority class.  The model still performs well on both possible outcomes of the response variable.
+
+### kNN
+
+The final model we will fit is k nearest neighbors.  kNN classifies observations based on the classes of the k observations that are closest to the given point.  Close is defined as euclidian distance and k is a hyperparameter that is chosen by the modeler.  kNN is a conceptually different algorithm than the others shown in this analysis and can sometimes have significantly differing performance.  It is also highly sensitive to the chosen value of k.  kNN tends to have higher varianace than the other algorithms and is very sensitive to variables considered and the chosen value of k.  While kNN is very prone to over-fitting it can potentially pick up important relationships that other algorithms might miss.
+
+The model building process for kNN was slightly different due to the fact that both variable selection and hyperparameter optimization needed to be performed.  For a given set of predictor variables, models with k values 1 through 15 were fit and evaluated on the test set.  The model with the highest test set accuracy was chosen as the best model for that set of variables.  The set of variables was chosen by first considering principal component variables, starting with 1 and moving up from there.  If the addition of a principal component raised the best model's accuracy rate, then that variable was added to the final model.  In the end, the 1st and 2nd principal components along with the 6th were included.  After that, demographic variables were considered one by one and evaluated using the same criteria.  After all was said and done, the only demographic variable to be included was gender.
+
+```{r}
+set.seed(2)
+train.x <- as.matrix(train %>% dplyr::select(PC1,PC2,PC6,GENDER))
+test.x <- as.matrix(test %>% dplyr::select(PC1,PC2,PC6,GENDER))
+train.y <- as.matrix(train$above_avg)
+k_val <- seq(1:15)
+results <- rep(0,15)
+for (k in k_val) {
+  knn.pred <- knn(train.x,test.x,train.y,k=k)
+  results[k] <- mean(knn.pred==test$above_avg)
+}
+results
+knn.pred <- knn(train.x,test.x,train.y,k=10)
+table(knn.pred,test$above_avg)
+print(paste0("The model correctly classifies ",round(100*mean(knn.pred==test$above_avg),1),"% of observations."))
+```
+The final model correctly identified 86.2% of test set observations.  As had been the case with all models, the majority class of the response variable was more accurately predicted than the minority class.  The model still performs well on both potential outcomes of the response variable.
+
+# Conclusion
+
+In terms of overall accuracy, the best performing model is LDA, followed by QDA, then logistic regression, and then kNN.  Since all of the models performed better on the "no" class (meaning that the user score average was less than 3) it is worth comparing the performance of the models specifically on the "yes" class (meaning that the user score average was greater than or equal to 3).  Evaluating on this metric, kNN and QDA performed the best, followed by LDA, and then logistic regression.  This is interesting because it differs significantly from the overall accuracy metric.  Since kNN and QDA are models that are more complex and try to reduce bias at the expense of variance, it appears that as the models become more complex, the better the model is able to predict the "yes" class, but the worse it is able to predict the "no" class.  Since there are more "no" responses in the dataset as compared to "yes", the less complex models tend to have better overall accuracy statistics.
+
+Overall, all models produced accuracy statistics that were all relatively similar to each other, indicating that no model significantly outperformed the other on this particular dataset.  In each model, PC1 and PC2 were included, indicating that these were universally the strongest predictor variables, which makes sense as these are the variables that explain the most variance in the dataset passed into the PCA function.  Most of the differences in model performance came from their ability to classify the majority or minority class, indicating that the business purpose or end objective of the model should inform what algorithm is ultimately chosen as the suitable choice.  
