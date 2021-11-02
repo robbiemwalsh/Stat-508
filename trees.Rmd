@@ -1,0 +1,132 @@
+---
+title: "Data Analysis Assignment 11"
+author: "Robbie Walsh"
+date: "10/31/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=F,warning=F}
+library(ISLR)
+library(tree)
+```
+
+
+# Introduction
+
+The purpose of this analysis is to explore tree methods and assess their effectiveness on predicting the purchase variable in the OJ dataset, from the ISLR package.  We will fit a tree without any modifications and calculate a test set accuracy, and try to buld better trees through cross-validation and through pruning.  We will create visualizations of these trees and produce confusion matrixes for each tree.  The results are that the decision tree (without bagging or boosting) does not outperform SVM or logistic regression, which have been fit on this dataset in previous analysis.  The pruned tree with 4 terminal nodes performs better than the unpruned tree with 7 terminal nodes.
+
+# Data
+
+The data used for this analysis is the OJ dataset from the ISLR package.  This dataset contains 18 variables on 1070 purchases where a customer either purchased Citrus Hill or Minute Maid Orange Juice.  The variables recorded in the dataset include which brand was purchased, information on which store the purchase was made at and the week the purchase was made, as well as price information on each brand such as the price changed, whether there was a discount or special, and how much that discount was relative to the price.
+
+```{r}
+summary(OJ)
+```
+Looking at a summary of the data, we can see that our response variable, Purchase, takes on two levels and is well balanced, with slightly more Citrus Hill (CH) being purchased than Minute Maid (MM).  Many of the other variables are quantitative variables, whose distributions will be explored below.  The categorical variables include StoreID, which takes on 5 levels, SpecialCH and SpecialMM, which take on values 0 and 1, Store7, which takes on No and Yes, and STORE, which takes on 5 levels.
+
+The graphs for exploratory data analysis are located in the appendix to save space.  Looking at figure 1 we can see that the fraction of CH purchased by week varies and is noisy, with a slight upward pattern but lots of variability.  Figure 2 shows us that the fraction of CH purchases varies significantly by store, with stores 0 and 4 having a high fraction of CH purchased, and store 3 having a much lower fraction of CH purchased.  Figure 3 shows that the price of CH is distributed relatively the same no matter which brand is ultimately purchased, but figure 4 shows that the price of MM tends to be slightly lower when MM is purchased.  Figures 5 and 6 show that when there is a higher discount customers tend to purchase that brand.  Figures 7 and 8 tell a similar story with regard to a special on that particular brand.  Figure 9 shows that customers that are loyal to CH tend to purchase CH more than those with lower loyalty.  Figures 10 and 11 tell a similar story to figures 3 and 4.  Figure 12 shows that when MM is more expensive relative to CH customers are more likely to purchase CH.  Figures 13 and 14 tell the same story as the other figures illustrating that offering a higher discount on a product makes a customer more likely to purchase that product.  Figure 15 shows the same information as figure 12.  The other variables not shown were StoreID, which gives the same information as store, and Store7, which is an indicator for store 7, which is the same as 0 in the STORE variable.
+
+# Analysis
+
+## Training and Test Data Creation
+
+```{r}
+# set seed and split data
+set.seed(5)
+samp <- sample(1:nrow(OJ),size = 800)
+train <- OJ[samp,]
+test <- OJ[-samp,]
+```
+
+## Fit Tree
+
+```{r}
+oj.tree <- tree(Purchase~.,data = train)
+summary(oj.tree)
+```
+Looking at the summary output of the initial tree obtained we can see that only three variables were used in the construction of the tree, LoyalCH, PriceDiff, and DiscCH, indicating that only a few variables were important in discriminating between CH and MM purchases.  There are 7 terminal nodes, indicating that the data have been bucketed into 7 outcomes.  The training error rate is 18.38%, meaning that the tree correctly classified 81.62% of observations in the training dataset.
+
+```{r}
+oj.tree
+```
+Looking at 4) in the output, we can see that it is a terminal node since there is a * at the end of that line.  We can see that the first part saying "LoyalCH < 0.142213" indicates that the final split before that terminal node is for observations that have their LoyalCH variable less than 0.142213.  The 100 that shows up next indicates that 100 observations in the training dataset fall into the terminal node.  45.39 is the deviance and MM is the overall prediction for that terminal node, since the majority of observations falling into that terminal node are MM purchases.  The (0.06,0.94) indicates that 6% of observations in the terminal node are CH purchases and 94% of observations are MM purchases.
+
+```{r}
+plot(oj.tree)
+text(oj.tree,pretty=0)
+```
+From the plot of the decision tree we can see that the first two splits are on LoyalCH, indicating that this variable was an important variable in discriminating between MM and CH purchases.  We can see that if LoyalCH is below 0.142213 then the tree will classify the observation as MM, which makes sense because if a customer is not very loyal to CH then they will purchase MM.  On the other end, if LoyalCH is above 0.705699 then the observation will be classified as CH, which also makes intuitive sense.  If LoyalCH was not outside of these extremes, then the next variable examined was PriceDiff, lower levels of PriceDiff tend to push the tree towards MM and higher levels of PriceDiff tend to push the model towards CH, which makes sense as PriceDiff is the sale price of MM less the sales price of CH.  In determining two of the terminal nodes, there is an additional split on the DiscCH variable, with less than 0.15 pushing the observation to be classified as MM and greater than that value leading to CH, which makes sense as a greater discount on CH should lead customers to be more likely to purchase CH over MM.
+
+```{r}
+oj.pred=predict(oj.tree,test,type="class")
+table(oj.pred,test$Purchase)
+```
+The test error rate is 24.44%.  While the model performs slightly better on CH purchase observations, the test error rates between the two classes are not significantly different, indicating that the model performs well on both classes.
+
+## Cross-Validation
+
+```{r}
+set.seed(5)
+cv.oj=cv.tree(oj.tree,FUN=prune.misclass)
+plot(cv.oj$size,cv.oj$dev,type="b")
+```
+The optimal tree size that produces the lowest cross-validation error rate is 7 terminal nodes.  We can see that the cross-validation error drops quickly as the size of the tree increases and gets slowly lower until the lowest level of 7 is reached.  Cross-validation is therefore telling us that the initial tree fit has the lowest cross-validation error.
+
+## Pruning
+
+Since cross-validation did not lead to the selection of a pruned tree, we will create a pruned tree with 4 terminal nodes, the instructions state to create a tree with 5 terminal nodes but there is no tree in the sequence with that amount of terminal nodes so the tree with 7 nodes is being returned.  Since this is an exercise in pruning, a tree with 4 terminal nodes is selected.
+
+```{r}
+prune.oj=prune.misclass(oj.tree,best=4)
+summary(prune.oj)
+
+prune.oj.pred <- predict(prune.oj,test,type="class")
+table(prune.oj.pred,test$Purchase)
+```
+The training error rate is 18.75%, slightly above the 18.38% error rate for the unpruned tree.  The test error rate for the pruned tree is 21.48%, which is below the 24.44% error rate that the unpruned tree achieved.  While the pruned tree had lower training accuracy, it had higher test set accuracy as the unpruned tree likely overfit the data to some degree.
+
+# Conclusions
+
+Decision trees did a good job of classifying the type of purchase made in the OJ dataset.  The decision trees fit in this analysis had a lower test and training accuracy as compared to other classifiers fit on this data in previous analysies, such as SVM and logistic regression.  There was minimal hyperparameter tuning when creating these decision trees and bagging or boosting would also likely increase performance as well.  The pruned tree in this analysis outperformed the unpruned tree on the test set, indicating that the initial tree overfit the data.
+
+# Appendix
+
+The appendix contains graphs referenced in the data section.
+
+```{r,message=F}
+library(dplyr)
+library(ggplot2)
+OJ %>% group_by(WeekofPurchase) %>% summarize(pct_ch = mean(Purchase=="CH")) %>% ggplot(aes(x=WeekofPurchase,y=pct_ch)) + geom_line() + labs(title="Figure 1: Fraction of CH Purchases by Week",y="Fraction of CH Purchases",x="Week of Purchase")
+
+OJ %>% group_by(STORE) %>% summarize(pct_ch = mean(Purchase=="CH")) %>% ggplot(aes(x=STORE,y=pct_ch)) + geom_col() + labs(title = "Figure 2: Fraction of CH Purchases by Store",y="Fraction of CH Purchases",x="Store Number")
+
+ggplot(OJ,aes(x=Purchase,y=PriceCH)) + geom_boxplot() + labs(title = "Figure 3: Distribution of PriceCH by Brand Purchased",y="Price of Citrus Hill",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=PriceMM)) + geom_boxplot() + labs(title = "Figure 4: Distribution of PriceMM by Brand Purchased",y="Price of Minute Maid",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=DiscCH)) + geom_boxplot() + labs(title = "Figure 5: Distribution of DiscCH by Brand Purchased",y="Discount of Citrus Hill",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=DiscMM)) + geom_boxplot() + labs(title = "Figure 6: Distribution of DiscMM by Brand Purchased",y="Discount of Minute Maid",x="Brand Purchased")
+
+OJ %>% group_by(SpecialCH) %>% summarize(pct_ch = mean(Purchase=="CH")) %>% ggplot(aes(x=as.factor(SpecialCH),y=pct_ch)) + geom_col() + labs(title = "Figure 7: Fraction of CH Purchases by Special on CH",y="Fraction of CH Purchases",x="Special on CH (1 means special)")
+
+OJ %>% group_by(SpecialMM) %>% summarize(pct_ch = mean(Purchase=="CH")) %>% ggplot(aes(x=as.factor(SpecialMM),y=pct_ch)) + geom_col() + labs(title = "Figure 8: Fraction of CH Purchases by Special on MM",y="Fraction of CH Purchases",x="Special on MM (1 means special)")
+
+ggplot(OJ,aes(x=Purchase,y=LoyalCH)) + geom_boxplot() + labs(title = "Figure 9: Distribution of LoyalCH by Brand Purchased",y="Customer Brand Loyalty for Citrus Hill",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=SalePriceMM)) + geom_boxplot() + labs(title = "Figure 10: Distribution of SalePriceMM by Brand Purchased",y="Sale Price of Minute Maid",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=SalePriceCH)) + geom_boxplot() + labs(title = "Figure 11: Distribution of SalePriceCH by Brand Purchased",y="Sale Price of Citrus Hill",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=PriceDiff)) + geom_boxplot() + labs(title = "Figure 12: Distribution of Price Difference",y="Sale price of MM less sale price of CH",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=PctDiscMM)) + geom_boxplot() + labs(title = "Figure 13: Distribution of PctDiscMM by Brand Purchased",y = "Percentage Discount for Minute Maid",x = "Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=PctDiscCH)) + geom_boxplot() + labs(title = "Figure 14: Distribution of PctDiscMM by Brand Purchased",y = "Percentage Discount for Citrus Hill",x = "Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=ListPriceDiff)) + geom_boxplot() + labs(title = "Figure 15: Distribution of ListPriceDiff by Brand Purchased",y = "List Price of Minute Maid less list price of Citrus Hill",x = "Brand Purchased")
+```
