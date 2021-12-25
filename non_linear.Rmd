@@ -1,0 +1,136 @@
+---
+title: "Data Analysis Assignment 12"
+author: "Robbie Walsh"
+date: "11/8/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=F,warning=F}
+library(tidyverse)
+library(ISLR)
+library(splines)
+library(gam)
+library(splitstackshape)
+```
+
+
+# Introduction
+
+The purpose of this analysis is to explore the Wage dataset, in the ISLR package, and examine the relationship between wage and the other variables in the dataset.  We will also build several models that incorporate non-linear relationships between the response and predictor variables.  The methods considered will be polynomial regression, regression splines and a generalized additive model that uses a smoothing spline.  The results are that each of the models created in this analysis perform well and fit the marginal effect of the quantitative variable well.  While the GAM model has the lowest error statistic, the models perform very similarly on the test set.
+
+# Data
+
+The dataset used in this analysis is the wage dataset from the ISLR package.  The dataset contains wage and other data for a group of 3000 male workers in the Mid-Atlantic region of the US.  The data was manually assembled by Steve Miller, from Open BI from the March 2011 Supplement to the Current Population Survey data (from the census bureau).  The dataset contains the year recorded and the wage and log of the worker's wage, as well as demographic information such as race, marital status and education.  There are also two variables related to the health of the worker, and the class of job that the worker has.  Some exploratory data analysis is conducted below.
+
+```{r,include=F,eval=F}
+summary(Wage)
+```
+We can see that there are 11 total variables, but that the region variable only takes on values "Middle Atlantic" and that wage and logwage are directly related to each other.  There are two other quantitative variables and the rest of the variables are categorical.  There are 3000 rows in the dataset and there are no missing values.
+
+The plots and code to produce them are located in the appendix.  From figure 1 we can see that the wage variable of interest is right-skewed, this makes sense as data related to income is often right skewed.  Looking at figure 2 we can see that taking the log of wage makes the variable more normally distributed, as such we will model the log of wage and then reverse the transformation to calculate error statistics.  Looking at figure 3 we can see that wages tend to increase over the years, although the relationship is not monotonic.  Since year takes on a small number of values, we will transform this variable into a categorical variable to more easily model the non-monotonic relationship.  The relationship between the log of wages and age is clearly non-linear, so the methods employed in this analysis should be useful.  The log of wages appears to differ slightly between workers of different marital statuses, although its not clear that that this will be statistically significant.  Workers that are white or asian appear to have higher wages than black or "other" workers.  There is a clear relationshp between the log of wage and a worker's educational attainment, with more educated workers having higher wages.  Job classification and health of the worker both appear to have a modest relationship with wage, although its not clear this relationship will be statistically significant.  Workers that have health insurance tend to have higher wages than workers without.  In this analysis, interactions between categorical variables will not be considered because there are too few observations in certain levels of the categorical variables to properly assess the relationship in a training and testing framework.
+
+# Analysis
+
+## Train-Test Split
+
+First we will split the dataset into a training and testing sample, we will take a stratified sample to ensure that all levels of the categorical variables are represented in both samples.  The testing dataset will be 20% of the original dataset size.
+
+```{r}
+set.seed(5)
+train_test <- stratified(Wage,size = 0.2,group = c("year","maritl","race","education","jobclass","health","health_ins"),bothSets = T)
+
+train <- train_test[[2]]
+test <- train_test[[1]]
+```
+
+## Polynomial Regression
+
+We will first attempt to model the marginal effect of age using polynomial regression, which is simply the usual least squares regression but also including higher order terms to allow for non-linear effects.  In building the polynomial model, we will start at the 1st power and work our way up, until the test set RMSE no longer increases.  The test RMSE continues to increase until we go beyond the 3rd power of age.  The cubic term is significant at a 10% level, beyond that point the polynomial age terms become insignificant.  Visual inspection of the univariate relationship of between age and log wages indicates that the relationship is predominantly quadratic, but the cubic term likely helps at the very low and very high ages.  The univariate fit of log wage vs age is very strong indicating that the polynomial regression model was able to model the relationship between age and log wages well.
+
+```{r}
+polyfit <- lm(logwage ~ year + maritl + race + education + jobclass + health + health_ins + poly(age,3),data = train)
+summary(polyfit)
+
+test <- test %>% mutate(pred_logwage = predict(polyfit,newdata = .,type = "response")) 
+
+test %>%
+  group_by(age) %>% summarize(actual = mean(logwage),predicted = mean(pred_logwage)) %>%
+  ggplot(aes(x=age)) + geom_line(aes(y=actual),col="red") + geom_line(aes(y=predicted),col="blue") + labs(title = "Figure 1: Average Predicted Log Wave vs Actual Log Wage over Age",subtitle = "Actual in red, Predicted in blue")
+
+poly_rmse <- sqrt(mean((exp(test$logwage) - exp(test$pred_logwage))^2))
+paste0("The test set RMSE is ",poly_rmse)
+```
+## Regression Splines
+
+The next method we will use for modeling the marginal effect of age is a regression spline.  This will allow the marginal effect to change at specific knot points across the age continuum, that we will specify based on visual inspection.  The marginal effect will be modeled as a cubic function, where the coefficients of the cubic function will be allowed to change at each knot point.  Based on figure 8, the appropriate locations for knots are 25, 40, and 60, since those are the locations where the marginal effect of age on log wage changes.  Looking at the univariate plot of predicted and actual log wage over age we can see that the spline models the marginal effect of age well.  This model results in a slightly more complex model than the polynomial regression because more terms are needed to create this particular type of spline.
+
+```{r}
+splinefit <- lm(logwage ~ year + maritl + race + education + jobclass + health + health_ins + bs(age,knots=c(25,40,60)),data = train)
+summary(splinefit)
+
+test <- test %>% mutate(pred_logwage = predict(splinefit,newdata = .,type = "response")) 
+
+test %>%
+  group_by(age) %>% summarize(actual = mean(logwage),predicted = mean(pred_logwage)) %>%
+  ggplot(aes(x=age)) + geom_line(aes(y=actual),col="red") + geom_line(aes(y=predicted),col="blue") + labs(title = "Figure 2: Average Predicted Log Wave vs Actual Log Wage over Age",subtitle = "Actual in red, Predicted in blue")
+
+spline_rmse <- sqrt(mean((exp(test$logwage) - exp(test$pred_logwage))^2))
+paste0("The test set RMSE is ",spline_rmse)
+```
+
+## GAM
+
+Generalized additive models are similar to multivariate regression in that they are additive models that estimate the marginal effect of each predictor variable on the response.  The difference is that GAMs do not require the marginal effect of each predictor variable be linear, allowing for more flexible fits to be naturally incorporated into a regression setting.  In this analysis we will use smoothing splines on the quantitative predictor to allow the marginal effect of age to be non-linear.  This approach is very similar to the regression splines but a separate fitting procedure than least squares needs to be used.  The smoothing spline will model the marginal effect of age, but will smooth out the curve, which will reduce the amount of noise we are fitting.  In order to fit the smoothing spline, we will have to specify the degrees of freedom in the smoothing spline, which will be chosen by choosing the degrees of freedom that gives us the lowest test RMSE.  We can see from the univariate plot that the smoothing spline models the marginal effect of age well.
+
+```{r}
+gamfit <-gam(logwage ~ year + maritl + race + education + jobclass + health + health_ins + s(age,6),data = train)
+summary(gamfit)
+
+test <- test %>% mutate(pred_logwage = predict(gamfit,newdata = .,type = "response")) 
+
+test %>%
+  group_by(age) %>% summarize(actual = mean(logwage),predicted = mean(pred_logwage)) %>%
+  ggplot(aes(x=age)) + geom_line(aes(y=actual),col="red") + geom_line(aes(y=predicted),col="blue") + labs(title = "Figure 3: Average Predicted Log Wave vs Actual Log Wage over Age",subtitle = "Actual in red, Predicted in blue")
+
+gam_rmse <- sqrt(mean((exp(test$logwage) - exp(test$pred_logwage))^2))
+paste0("The test set RMSE is ",gam_rmse)
+```
+
+# Conclusions
+
+```{r}
+table <- data.frame(cbind(c("Polynomial Regression","Regression Spline","GAM"),c(round(poly_rmse,4),round(spline_rmse,4),round(gam_rmse,4))))
+names(table) <- c("Model","RMSE")
+table
+```
+The results show that each of the models produce similar error statistics.  The univariate plots of actual vs predicted log wages showed that each technique for modeling the marginal effect of age produced qualitatively similar results and each method resulted in a strong univariate fit.  While the GAM's error statistics are the lowest, the order or magnitude of the differences between the models is small since each model adequately captures the relationship we are looking to model.  This shows that each of the methodologies explored here work well for incorporating non-linear relationships and other more flexible relationships into a linear model framework that allows for complex relationships while still preserving interpretability of the model.
+
+# Appendix
+
+```{r}
+Wage %>% ggplot(aes(x=wage)) + geom_histogram() + labs(title = "Figure 4: Histogram of Wage")
+Wage %>% ggplot(aes(x=logwage)) + geom_histogram() + labs(title = "Figure 5: Histogram of Log Wage")
+
+Wage %>% group_by(year) %>% summarize(wage = mean(logwage)) %>%
+  ggplot(aes(x=as.numeric(year),y=wage)) + geom_line(col="blue") + labs(title = "Figure 6: Average Log Wage over Year",y="Wage",x="Year")
+Wage <- Wage %>% mutate(year = as.factor(year))
+
+Wage %>% group_by(age) %>% summarize(wage = mean(logwage)) %>%
+  ggplot(aes(x=age,y=wage)) + geom_line(col="blue") + labs(title = "Figure 7: Average Log Wage over Age",y="Wage",x="Age")
+
+ggplot(Wage,aes(x=maritl,y=logwage)) + geom_boxplot() + labs(title = "Figure 8: Boxplot of Log Wage by Marital Status")
+
+ggplot(Wage,aes(x=race,y=logwage)) + geom_boxplot() + labs(title = "Figure 9: Boxplot of Log Wage by Race")
+
+ggplot(Wage,aes(x=education,y=logwage)) + geom_boxplot() + labs(title = "Figure 10: Boxplot of Log Wage by Educational Attainment")
+
+ggplot(Wage,aes(x=jobclass,y=logwage)) + geom_boxplot() + labs(title = "Figure 11: Boxplot of Log Wage by Job Classification")
+
+ggplot(Wage,aes(x=health,y=logwage)) + geom_boxplot() + labs(title = "Figure 12: Boxplopt of Log Wage by Health")
+
+ggplot(Wage,aes(x=health_ins,y=logwage)) + geom_boxplot() + labs(title = "Figure 13: Boxplot of Log Wage by Health Insurance Status")
+```
