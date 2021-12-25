@@ -1,0 +1,217 @@
+---
+title: "Data Analysis Assignment 9"
+author: "Robbie Walsh"
+date: "10/21/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=F,warning=F}
+library(ISLR)
+library(tidyverse)
+library(e1071)
+```
+
+
+# Introduction
+
+The purpose of this analysis is to explore Support Vector Machines and see how they perform on the OJ dataset, in the ISLR package.  The analysis will include hyperparameter tuning to select an optimal cost parameter, and also explore the performance of several different kernels and compare how each performs on a test dataset.  Support Vector Machines create a decision boundary that separate the classes of the response variable, the exact way this decision boundary is created depends on the cost hyperparameter and the kernel chosen.  The results are that the polynomial kernel with an optimal cost parameter ultimately had the highest test set accuracy, with the linear and radial kernel performing next best, respectively.  The radial kernel improved most from cost parameter optimization while there was the least marginal benefit from optimizing the polynomial kernel's.
+
+# Data
+
+The data used for this analysis is the OJ dataset from the ISLR package.  This dataset contains 18 variables on 1070 purchases where a customer either purchased Citrus Hill or Minute Maid Orange Juice.  The variables recorded in the dataset include which brand was purchased, information on which store the purchase was made at and the week the purchase was made, as well as price information on each brand such as the price changed, whether there was a discount or special, and how much that discount was relative to the price.
+
+```{r}
+summary(OJ)
+```
+Looking at a summary of the data, we can see that our response variable, Purchase, takes on two levels and is well balanced, with slightly more Citrus Hill (CH) being purchased than Minute Maid (MM).  Many of the other variables are quantitative variables, whose distributions will be explored below.  The categorical variables include StoreID, which takes on 5 levels, SpecialCH and SpecialMM, which take on values 0 and 1, Store7, which takes on No and Yes, and STORE, which takes on 5 levels.
+
+The graphs for exploratory data analysis are located in the appendix to save space.  Looking at figure 1 we can see that the fraction of CH purchased by week varies and is noisy, with a slight upward pattern but lots of variability.  Figure 2 shows us that the fraction of CH purchases varies significantly by store, with stores 0 and 4 having a high fraction of CH purchased, and store 3 having a much lower fraction of CH purchased.  Figure 3 shows that the price of CH is distributed relatively the same no matter which brand is ultimately purchased, but figure 4 shows that the price of MM tends to be slightly lower when MM is purchased.  Figures 5 and 6 show that when there is a higher discount customers tend to purchase that brand.  Figures 7 and 8 tell a similar story with regard to a special on that particular brand.  Figure 9 shows that customers that are loyal to CH tend to purchase CH more than those with lower loyalty.  Figures 10 and 11 tell a similar story to figures 3 and 4.  Figure 12 shows that when MM is more expensive relative to CH customers are more likely to purchase CH.  Figures 13 and 14 tell the same story as the other figures illustrating that offering a higher discount on a product makes a customer more likely to purchase that product.  Figure 15 shows the same information as figure 12.  The other variables not shown were StoreID, which gives the same information as store, and Store7, which is an indicator for store 7, which is the same as 0 in the STORE variable.
+
+# Analysis 
+
+## Train and Test Set Creation
+
+We will create a training set with 800 randomly samples observations (out of 1070) and save the remaining as a test set.
+
+```{r}
+set.seed(5)
+samp <- sample(seq(1:nrow(OJ)),size = 800)
+
+train <- OJ[samp,]
+test <- OJ[-samp,]
+```
+
+## Support Vector Classifier
+
+### Initial Fit
+
+We will first fit an SVM with a linear kernel, known as a support vector classifier, using a cost parameter of 0.01 and calculate training and testing error rates and display a confusion matrix.  We will also examine the number of support vectors chosen.  A linear kernel creates linear decision boundaries with respect to each predictor and is generally considered the simplest basis function, this will perform well if the relationships between variables are linear.
+
+```{r}
+svmfit <- svm(Purchase~.,data = train,kernel = "linear",cost=0.01,scale = F)
+summary(svmfit)
+print("Confusion Matrix, In-Sample")
+table(train$Purchase,predict(svmfit,train,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(train$Purchase==predict(svmfit,train,type="response"))/nrow(train)
+print(paste0("Total accuracy in-sample is ",round(accuracy*100,2),"%"))
+
+print("Confusion Matrix, Out-of-Sample")
+table(test$Purchase,predict(svmfit,test,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(test$Purchase==predict(svmfit,test,type="response"))/nrow(test)
+print(paste0("Total accuracy out-of-sample is ",round(accuracy*100,2),"%"))
+```
+Fitting the linear kernel with a cost of 0.01 we see that there are a lot of support vectors (614 out of 800 obs), indicating that many of the observations were crucial in creating the decision boundary, meaning that the classes were not well separated using this boundary.  Interestingly, the training accuracy was lower than the test accuracy, but not by much.  The model did a better job at fitting CH as compared to MM
+
+### Hyperparameter Tuning
+
+We will now tune the cost hyperparameter, selecting several values between 0.01 and 10 and choosing the model with the cost parameter that has the lowest cross-validation error.
+
+```{r}
+set.seed(5)
+tune.out=tune(svm,Purchase∼.,data=train,kernel="linear",ranges=list(cost=c(seq(0.01,10,by=0.5),10)))
+bestmod <- tune.out$best.model
+summary(bestmod)
+
+print("Confusion Matrix, In-Sample")
+table(train$Purchase,predict(bestmod,train,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(train$Purchase==predict(bestmod,train,type="response"))/nrow(train)
+print(paste0("Total accuracy in-sample is ",round(accuracy*100,2),"%"))
+
+print("Confusion Matrix, Out-of-Sample")
+table(test$Purchase,predict(bestmod,test,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(test$Purchase==predict(bestmod,test,type="response"))/nrow(test)
+print(paste0("Total accuracy out-of-sample is ",round(accuracy*100,2),"%"))
+```
+The optimal cost parameter chosen was 3.01, indicating that a slightly less flexible fit was preferable, and as a result we get significantly less support vectors.  This model's accuracy is much higher on the training and testing set.  This model is slightly less accurate on CH observations but more than makes up for it with improvements in accuracy on MM observations.
+
+## Radial Kernel
+
+### Initial Fit
+
+We will now fit an SVM with a radial kernel, and a cost parameter of 0.01.  The radial kernal allows for circular and curved decision boundaries to be fit.  This allows for more complex non-linear relationships to be fit, but can overfit relative to the linear kernel.
+
+```{r}
+svmfit <- svm(Purchase~.,data = train,kernel = "radial",cost=0.01,scale = F,gamma = 1)
+summary(svmfit)
+print("Confusion Matrix, In-Sample")
+table(train$Purchase,predict(svmfit,train,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(train$Purchase==predict(svmfit,train,type="response"))/nrow(train)
+print(paste0("Total accuracy in-sample is ",round(accuracy*100,2),"%"))
+
+print("Confusion Matrix, Out-of-Sample")
+table(test$Purchase,predict(svmfit,test,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(test$Purchase==predict(svmfit,test,type="response"))/nrow(test)
+print(paste0("Total accuracy out-of-sample is ",round(accuracy*100,2),"%"))
+```
+The initial fit of the radial kernel performs worse than the linear kernel.  There are even more support vectors and the training and test accuracy numbers are not good.  Every observation appears to be classified as CH, indicating that this model performs as well as selecting the majority class for every observation would.
+
+### Hyperparameter Tuning
+
+We will now tune the cost hyperparameter, selecting several values between 0.01 and 10 and choosing the model with the cost parameter that has the lowest cross-validation error.
+
+```{r}
+set.seed(5)
+tune.out=tune(svm,Purchase∼.,data=train,kernel="radial",gamma = 1,ranges=list(cost=c(seq(0.01,10,by=0.5),10)))
+bestmod <- tune.out$best.model
+summary(bestmod)
+
+print("Confusion Matrix, In-Sample")
+table(train$Purchase,predict(bestmod,train,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(train$Purchase==predict(bestmod,train,type="response"))/nrow(train)
+print(paste0("Total accuracy in-sample is ",round(accuracy*100,2),"%"))
+
+print("Confusion Matrix, Out-of-Sample")
+table(test$Purchase,predict(bestmod,test,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(test$Purchase==predict(bestmod,test,type="response"))/nrow(test)
+print(paste0("Total accuracy out-of-sample is ",round(accuracy*100,2),"%"))
+```
+The optimal cost parameter chosen was 1.01, lower than the linear kernel, indicating that less restriction was needed to fit the optimal SVM with a radial kernel.  More support vectors exist for this model as compared to the linear kernel.  The in-sample accuracy is better than the linear kernel's but the test set accuracy is a bit lower.  Similar the linear kernel, accuracy on CH was slightly sacrificed for much greater accuracy on MM.
+
+## Polynomial Kernel
+
+### Initial Fit
+
+We will now fit an SVM with a polynomial kernel, of degree 2 with a cost parameter of 0.01.  The polynomial kernal will allow decision boundaries to be created that are polynomial in nature, up to the degree specified.  This method has the potential to overfit more than the linear kernal and fits different shapes than the radial kernel.
+
+```{r}
+svmfit <- svm(Purchase~.,data = train,kernel = "polynomial",cost=0.01,scale = F,degree = 2)
+summary(svmfit)
+print("Confusion Matrix, In-Sample")
+table(train$Purchase,predict(svmfit,train,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(train$Purchase==predict(svmfit,train,type="response"))/nrow(train)
+print(paste0("Total accuracy in-sample is ",round(accuracy*100,2),"%"))
+
+print("Confusion Matrix, Out-of-Sample")
+table(test$Purchase,predict(svmfit,test,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(test$Purchase==predict(svmfit,test,type="response"))/nrow(test)
+print(paste0("Total accuracy out-of-sample is ",round(accuracy*100,2),"%"))
+```
+The polynomial kernel with degree 2 performs the best out of the three kernels considered using a cost parameter of 0.01.  The number of support vectors needed is similar to the optimal cost parameter linear kernal, and the accuracy rates are similar to the accuracy rate generated by that model as well.  This model appears to perform similarly on the test and train sets and performs relatively well on both MM and CH observations.
+
+### Hyperparameter Tuning
+
+We will now tune the cost hyperparameter, selecting several values between 0.01 and 10 and choosing the model with the cost parameter that has the lowest cross-validation error.
+
+```{r}
+set.seed(5)
+tune.out=tune(svm,Purchase∼.,data=train,kernel="polynomial",degree = 2,ranges=list(cost=c(seq(0.01,10,by=0.5),10)))
+bestmod <- tune.out$best.model
+summary(bestmod)
+
+print("Confusion Matrix, In-Sample")
+table(train$Purchase,predict(bestmod,train,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(train$Purchase==predict(bestmod,train,type="response"))/nrow(train)
+print(paste0("Total accuracy in-sample is ",round(accuracy*100,2),"%"))
+
+print("Confusion Matrix, Out-of-Sample")
+table(test$Purchase,predict(bestmod,test,type="response"),dnn = c("True","Predicted"))
+accuracy <- sum(test$Purchase==predict(bestmod,test,type="response"))/nrow(test)
+print(paste0("Total accuracy out-of-sample is ",round(accuracy*100,2),"%"))
+```
+The optimal cost parameter chosen was 8.01, indicating that a significant amount of restriction was needed in order to fit the optimal model, this makes sense as there is a significant risk of overfitting with the polynomial kernel.  This model has the highest test set accuracy of any of the models fit in this analysis, indicating that this is the best performing model on this dataset.  One interesting point was that for each of the previous kernels, choosing the optimal cost parameter tended to sacrifice performance on CH observations for increased accuracy on MM observations, while for this kernel the opposite was true.
+
+# Conclusions
+
+The polynomial kernel with cost parameter of 8.01 ultimately produced the highest test set accuracy.  The linear and radial kernel both had strong test set accuracy once their cost parameter was optimized.  All three models tended to perform better on CH observations as compared to MM observations but an effective choice of the cost parameter led to strong performance on both classes in every kernel chosen.  There appeared to be some issues with overfitting with the radial kernel as the ultimate training set accuracy was significantly above the test set accuracy, which was not the case with the other two kernels.  
+
+The major takeaway from this analysis is that a variety of kernels may provide an appropriate fit to a dataset, but ensuring an appropriate cost parameter is relatively more important than the kernal chosen.  For this particular dataset, the polynomial kernel with degree 2 performed best on the test set, with the linear kernel coming in not far behind.
+
+# Appendix
+
+The appendix contains graphs references in the data section.
+
+```{r}
+OJ %>% group_by(WeekofPurchase) %>% summarize(pct_ch = mean(Purchase=="CH")) %>% ggplot(aes(x=WeekofPurchase,y=pct_ch)) + geom_line() + labs(title="Figure 1: Fraction of CH Purchases by Week",y="Fraction of CH Purchases",x="Week of Purchase")
+
+OJ %>% group_by(STORE) %>% summarize(pct_ch = mean(Purchase=="CH")) %>% ggplot(aes(x=STORE,y=pct_ch)) + geom_col() + labs(title = "Figure 2: Fraction of CH Purchases by Store",y="Fraction of CH Purchases",x="Store Number")
+
+ggplot(OJ,aes(x=Purchase,y=PriceCH)) + geom_boxplot() + labs(title = "Figure 3: Distribution of PriceCH by Brand Purchased",y="Price of Citrus Hill",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=PriceMM)) + geom_boxplot() + labs(title = "Figure 4: Distribution of PriceMM by Brand Purchased",y="Price of Minute Maid",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=DiscCH)) + geom_boxplot() + labs(title = "Figure 5: Distribution of DiscCH by Brand Purchased",y="Discount of Citrus Hill",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=DiscMM)) + geom_boxplot() + labs(title = "Figure 6: Distribution of DiscMM by Brand Purchased",y="Discount of Minute Maid",x="Brand Purchased")
+
+OJ %>% group_by(SpecialCH) %>% summarize(pct_ch = mean(Purchase=="CH")) %>% ggplot(aes(x=as.factor(SpecialCH),y=pct_ch)) + geom_col() + labs(title = "Figure 7: Fraction of CH Purchases by Special on CH",y="Fraction of CH Purchases",x="Special on CH (1 means special)")
+
+OJ %>% group_by(SpecialMM) %>% summarize(pct_ch = mean(Purchase=="CH")) %>% ggplot(aes(x=as.factor(SpecialMM),y=pct_ch)) + geom_col() + labs(title = "Figure 8: Fraction of CH Purchases by Special on MM",y="Fraction of CH Purchases",x="Special on MM (1 means special)")
+
+ggplot(OJ,aes(x=Purchase,y=LoyalCH)) + geom_boxplot() + labs(title = "Figure 9: Distribution of LoyalCH by Brand Purchased",y="Customer Brand Loyalty for Citrus Hill",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=SalePriceMM)) + geom_boxplot() + labs(title = "Figure 10: Distribution of SalePriceMM by Brand Purchased",y="Sale Price of Minute Maid",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=SalePriceCH)) + geom_boxplot() + labs(title = "Figure 11: Distribution of SalePriceCH by Brand Purchased",y="Sale Price of Citrus Hill",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=PriceDiff)) + geom_boxplot() + labs(title = "Figure 12: Distribution of Price Difference",y="Sale price of MM less sale price of CH",x="Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=PctDiscMM)) + geom_boxplot() + labs(title = "Figure 13: Distribution of PctDiscMM by Brand Purchased",y = "Percentage Discount for Minute Maid",x = "Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=PctDiscCH)) + geom_boxplot() + labs(title = "Figure 14: Distribution of PctDiscMM by Brand Purchased",y = "Percentage Discount for Citrus Hill",x = "Brand Purchased")
+
+ggplot(OJ,aes(x=Purchase,y=ListPriceDiff)) + geom_boxplot() + labs(title = "Figure 15: Distribution of ListPriceDiff by Brand Purchased",y = "List Price of Minute Maid less list price of Citrus Hill",x = "Brand Purchased")
+```
